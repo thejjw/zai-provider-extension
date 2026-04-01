@@ -208,6 +208,15 @@ export const ZAI_MODELS: ZaiModelInfo[] = [
     supportsVision: false, // Text-only model
   },
   {
+    id: "glm-5-turbo",
+    name: "GLM-5-Turbo",
+    displayName: "GLM-5-Turbo",
+    contextWindow: 200000,
+    maxOutput: 131072,
+    supportsTools: true,
+    supportsVision: false, // Text-only model
+  },
+  {
     id: "glm-5v-turbo",
     name: "GLM-5V-Turbo",
     displayName: "GLM-5V-Turbo",
