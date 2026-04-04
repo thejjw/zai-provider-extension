@@ -31,6 +31,23 @@ import {
 } from "./utils";
 import type { LegacyPart } from "./utils";
 import { ZaiMcpClient } from "./mcp";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+
+const DEBUG_LOG_PATH = path.join(os.homedir(), "zai-debug.log");
+
+function debugLog(msg: string, data?: Record<string, unknown>): void {
+  const timestamp = new Date().toISOString();
+  const line = data
+    ? `[${timestamp}] ${msg} ${JSON.stringify(data)}\n`
+    : `[${timestamp}] ${msg}\n`;
+  try {
+    fs.appendFileSync(DEBUG_LOG_PATH, line);
+  } catch {
+    // Ignore write errors
+  }
+}
 
 const BASE_URL = "https://api.z.ai/api/coding/paas/v4";
 const MAX_TOOL_RESULT_CHARS = 20000;
@@ -488,6 +505,18 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
           : model.maxInputTokens
       );
       const totalEstimatedTokens = inputTokenCount + toolTokenCount;
+      debugLog("PRE-REQUEST", {
+        model: effectiveModelId,
+        messageCount: processedMessages.length,
+        inputTokenEstimate: inputTokenCount,
+        toolTokenEstimate: toolTokenCount,
+        totalEstimate: totalEstimatedTokens,
+        contextWindow: tokenLimit,
+        maxInputTokensReported: Math.floor(tokenLimit * 0.75),
+        maxOutputTokens: effectiveMaxOutputTokens,
+        requestedMaxTokens,
+        utilizationPct: Math.round((totalEstimatedTokens / tokenLimit) * 100),
+      });
       if (totalEstimatedTokens > tokenLimit) {
         console.error("[Z.ai Model Provider] Message exceeds token limit", {
           total: totalEstimatedTokens,
@@ -627,10 +656,7 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
         content: text.content as (vscode.LanguageModelInputPart | LegacyPart)[],
       },
     ]);
-    console.log("[Z.ai Model Provider] provideTokenCount (message):", {
-      partCount,
-      result: totalTokens,
-    });
+    debugLog("TOKEN-COUNT", { type: "message", partCount, result: totalTokens });
     return Promise.resolve(totalTokens);
   }
 
@@ -703,6 +729,10 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
             await this.flushToolCallBuffers(progress, false);
             await this.flushActiveTextToolCall(progress);
             // Report usage metrics
+            debugLog("STREAM-DONE", {
+              apiPromptTokens: this._usageMetrics.prompt_tokens,
+              apiCompletionTokens: this._usageMetrics.completion_tokens,
+            });
             console.log("[Z.ai Model Provider] Stream [DONE], final usage metrics:", {
               prompt_tokens: this._usageMetrics.prompt_tokens,
               completion_tokens: this._usageMetrics.completion_tokens,

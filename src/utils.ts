@@ -538,10 +538,10 @@ export function validateRequest(
 }
 
 /**
- * Estimate token count (rough approximation: ~4 chars per token)
+ * Estimate token count (rough approximation: ~3 chars per token)
  */
 export function estimateTokens(text: string): number {
-  const result = Math.ceil(text.length / 4);
+  const result = Math.ceil(text.length / 3);
   return result;
 }
 
@@ -574,6 +574,18 @@ export function estimateMessagesTokens(
         // Rough estimate based on base64 size to avoid undercount
         const approxBase64Tokens = Math.ceil(img.data.length / 3);
         total += Math.max(1500, approxBase64Tokens);
+        continue;
+      }
+      const toolCall = getToolCallInfo(part);
+      if (toolCall) {
+        if (toolCall.name) total += estimateTokens(toolCall.name);
+        if (toolCall.args) {
+          const argsStr =
+            typeof toolCall.args === "string"
+              ? toolCall.args
+              : JSON.stringify(toolCall.args);
+          total += estimateTokens(argsStr);
+        }
         continue;
       }
       const toolResultTexts = getToolResultTexts(

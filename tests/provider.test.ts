@@ -177,6 +177,6 @@ describe("ZaiChatModelProvider", () => {
       message,
       createToken()
     );
-    expect(count).toBe(Math.ceil(text.length / 4));
+    expect(count).toBe(Math.ceil(text.length / 3));
   });
 });

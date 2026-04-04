@@ -163,32 +163,32 @@ describe("estimateTokens", () => {
 
   it("should estimate tokens for short text", () => {
     const text = "Hello";
-    expect(estimateTokens(text)).toBe(Math.ceil(5 / 4)); // 5 chars / 4 = 1.25 -> 2
+    expect(estimateTokens(text)).toBe(Math.ceil(5 / 3)); // 5 chars / 4 = 1.25 -> 2
   });
 
   it("should estimate tokens for longer text", () => {
     const text = "Hello world, this is a test";
-    expect(estimateTokens(text)).toBe(Math.ceil(27 / 4)); // 27 chars / 4 = 6.75 -> 7
+    expect(estimateTokens(text)).toBe(Math.ceil(27 / 3)); // 27 chars / 4 = 6.75 -> 7
   });
 
   it("should handle whitespace", () => {
     const text = "Hello   world";
-    expect(estimateTokens(text)).toBe(Math.ceil(13 / 4)); // 13 chars / 4 = 3.25 -> 4
+    expect(estimateTokens(text)).toBe(Math.ceil(13 / 3)); // 13 chars / 4 = 3.25 -> 4
   });
 
   it("should handle newlines", () => {
     const text = "Hello\nWorld\nTest";
-    expect(estimateTokens(text)).toBe(Math.ceil(15 / 4)); // 15 chars / 4 = 3.75 -> 4
+    expect(estimateTokens(text)).toBe(Math.ceil(16 / 3)); // 16 chars (incl \n) / 3 -> 6
   });
 
   it("should handle unicode characters", () => {
     const text = "こんにちは世界";
-    expect(estimateTokens(text)).toBe(Math.ceil(7 / 4)); // 7 chars / 4 = 1.75 -> 2
+    expect(estimateTokens(text)).toBe(Math.ceil(7 / 3)); // 7 chars / 4 = 1.75 -> 2
   });
 
   it("should handle special characters", () => {
     const text = "!@#$%^&*()";
-    expect(estimateTokens(text)).toBe(Math.ceil(10 / 4)); // 10 chars / 4 = 2.5 -> 3
+    expect(estimateTokens(text)).toBe(Math.ceil(10 / 3)); // 10 chars / 4 = 2.5 -> 3
   });
 });
 
@@ -199,7 +199,7 @@ describe("estimateMessagesTokens", () => {
       [new vscode.LanguageModelTextPart("Hello world")]
     );
     const tokens = estimateMessagesTokens(toEstimatableMessages([message]));
-    expect(tokens).toBe(Math.ceil(11 / 4)); // 11 chars / 4 = 2.75 -> 3
+    expect(tokens).toBe(Math.ceil(11 / 3)); // 11 chars / 4 = 2.75 -> 3
   });
 
   it("should estimate tokens for multiple messages", () => {
@@ -214,7 +214,7 @@ describe("estimateMessagesTokens", () => {
       ),
     ];
     const tokens = estimateMessagesTokens(toEstimatableMessages(messages));
-    expect(tokens).toBe(Math.ceil(14 / 4)); // 14 chars total / 4 = 3.5 -> 4
+    expect(tokens).toBe(Math.ceil(14 / 3)); // 14 chars total / 4 = 3.5 -> 4
   });
 
   it("should estimate tokens for messages with images", () => {
@@ -242,7 +242,7 @@ describe("estimateMessagesTokens", () => {
     );
 
     const tokens = estimateMessagesTokens(toEstimatableMessages([message]));
-    expect(tokens).toBe(Math.ceil(text.length / 4));
+    expect(tokens).toBe(Math.ceil(text.length / 3));
   });
 
   it("should estimate tokens for json data parts", () => {
@@ -255,7 +255,7 @@ describe("estimateMessagesTokens", () => {
     );
 
     const tokens = estimateMessagesTokens(toEstimatableMessages([message]));
-    expect(tokens).toBe(Math.ceil(jsonText.length / 4));
+    expect(tokens).toBe(Math.ceil(jsonText.length / 3));
   });
 
   it("should estimate tokens for message with only text", () => {
