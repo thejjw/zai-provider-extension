@@ -223,6 +223,16 @@ export const ZAI_MODELS: ZaiModelInfo[] = [
     supportsVision: false, // Text-only model
   },
   {
+    id: "glm-4.6v",
+    name: "GLM-4.6V",
+    displayName: "GLM-4.6V",
+    contextWindow: 131072,
+    maxOutput: 16384,
+    supportsTools: true,
+    supportsVision: true,
+    internal: true, // Internal-only vision fallback, not user-selectable
+  },
+  {
     id: "glm-5v-turbo",
     name: "GLM-5V-Turbo",
     displayName: "GLM-5V-Turbo",

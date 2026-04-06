@@ -442,6 +442,8 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
       const hasImages = this.hasImageInput(messages);
       let processedMessages = messages;
       let effectiveModelId = model.id;
+      /** Whether we switched to a vision fallback model (may need OCR recovery) */
+      let usedVisionFallback = false;
 
       if (hasImages) {
         if (!this.modelSupportsVision(model.id)) {
@@ -455,6 +457,7 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
               }
             );
             effectiveModelId = visionFallback;
+            usedVisionFallback = true;
           } else {
             console.warn(
               "[Z.ai Model Provider] No vision model available, using OCR fallback"
@@ -593,22 +596,105 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
       if (!response.ok) {
         const errorText = await response.text();
         console.error("[Z.ai Model Provider] API error response", errorText);
-        throw this.toLanguageModelError(
-          response.status,
-          response.statusText,
-          errorText
+
+        // If vision fallback failed due to subscription limits (429 + code 1311),
+        // fall back to OCR processing on the original model instead.
+        if (
+          usedVisionFallback &&
+          response.status === 429 &&
+          errorText.includes("1311")
+        ) {
+          console.warn(
+            "[Z.ai Model Provider] Vision model unavailable on subscription, falling back to OCR",
+            { originalModel: model.id, failedVisionModel: effectiveModelId }
+          );
+
+          // Reset to original model and process images via OCR
+          effectiveModelId = model.id;
+          const ocrResult = await this.processImagesForNonVisionModel(
+            messages,
+            model.id,
+            token
+          );
+          processedMessages = ocrResult.processedMessages;
+
+          // Rebuild request with original model + OCR'd messages
+          const ocrZaiMessages = convertMessages(processedMessages, {
+            maxToolResultChars: MAX_TOOL_RESULT_CHARS,
+          });
+          const ocrRequestBody: ZaiRequestBody = {
+            model: effectiveModelId,
+            messages: ocrZaiMessages,
+            stream: true,
+            stream_options: { include_usage: true },
+            max_tokens: requestedMaxTokens,
+            temperature: temperatureVal,
+          };
+          if (this.isThinkingEnabled()) {
+            ocrRequestBody.thinking = { type: "enabled" };
+          }
+          if (toolConfig.tools) {
+            ocrRequestBody.tools = toolConfig.tools;
+          }
+          if (toolConfig.tool_choice) {
+            ocrRequestBody.tool_choice = toolConfig.tool_choice;
+          }
+
+          console.log("[Z.ai Model Provider] 🔄 Retrying with OCR fallback", {
+            model: effectiveModelId,
+          });
+
+          const retryResponse = await fetch(`${BASE_URL}/chat/completions`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+              "User-Agent": this.userAgent,
+            },
+            signal: abortController.signal,
+            body: JSON.stringify(ocrRequestBody),
+          });
+
+          if (!retryResponse.ok) {
+            const retryErrorText = await retryResponse.text();
+            console.error(
+              "[Z.ai Model Provider] OCR fallback also failed",
+              retryErrorText
+            );
+            throw this.toLanguageModelError(
+              retryResponse.status,
+              retryResponse.statusText,
+              retryErrorText
+            );
+          }
+
+          if (!retryResponse.body) {
+            throw new Error("No response body from Z.ai API");
+          }
+
+          await this.processStreamingResponse(
+            retryResponse.body,
+            trackingProgress,
+            token
+          );
+        } else {
+          throw this.toLanguageModelError(
+            response.status,
+            response.statusText,
+            errorText
+          );
+        }
+      } else {
+        if (!response.body) {
+          throw new Error("No response body from Z.ai API");
+        }
+
+        await this.processStreamingResponse(
+          response.body,
+          trackingProgress,
+          token
         );
       }
-
-      if (!response.body) {
-        throw new Error("No response body from Z.ai API");
-      }
-
-      await this.processStreamingResponse(
-        response.body,
-        trackingProgress,
-        token
-      );
     } catch (err) {
       if (
         token.isCancellationRequested ||
@@ -656,7 +742,11 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
         content: text.content as (vscode.LanguageModelInputPart | LegacyPart)[],
       },
     ]);
-    debugLog("TOKEN-COUNT", { type: "message", partCount, result: totalTokens });
+    debugLog("TOKEN-COUNT", {
+      type: "message",
+      partCount,
+      result: totalTokens,
+    });
     return Promise.resolve(totalTokens);
   }
 
@@ -733,11 +823,14 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
               apiPromptTokens: this._usageMetrics.prompt_tokens,
               apiCompletionTokens: this._usageMetrics.completion_tokens,
             });
-            console.log("[Z.ai Model Provider] Stream [DONE], final usage metrics:", {
-              prompt_tokens: this._usageMetrics.prompt_tokens,
-              completion_tokens: this._usageMetrics.completion_tokens,
-              alreadyReported: this._usageReported,
-            });
+            console.log(
+              "[Z.ai Model Provider] Stream [DONE], final usage metrics:",
+              {
+                prompt_tokens: this._usageMetrics.prompt_tokens,
+                completion_tokens: this._usageMetrics.completion_tokens,
+                alreadyReported: this._usageReported,
+              }
+            );
             this.reportUsageMetrics(progress);
             continue;
           }
@@ -746,7 +839,10 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
             const parsed = JSON.parse(data) as ZaiStreamResponse;
             // Track usage metrics from the response
             if (parsed.usage) {
-              console.log("[Z.ai Model Provider] Received usage in chunk:", parsed.usage);
+              console.log(
+                "[Z.ai Model Provider] Received usage in chunk:",
+                parsed.usage
+              );
               if (parsed.usage.prompt_tokens !== undefined) {
                 this._usageMetrics.prompt_tokens = parsed.usage.prompt_tokens;
               }
@@ -759,7 +855,10 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
             if (parsed.choices && parsed.choices.length > 0) {
               await this.processDelta(parsed, progress);
             } else if (parsed.usage) {
-              console.log("[Z.ai Model Provider] Received usage-only final chunk:", parsed.usage);
+              console.log(
+                "[Z.ai Model Provider] Received usage-only final chunk:",
+                parsed.usage
+              );
             }
           } catch {
             // Silently ignore malformed SSE lines temporarily
@@ -806,8 +905,7 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
       this._usageMetrics.completion_tokens > 0
     ) {
       const totalTokens =
-        this._usageMetrics.prompt_tokens +
-        this._usageMetrics.completion_tokens;
+        this._usageMetrics.prompt_tokens + this._usageMetrics.completion_tokens;
       console.log("[Z.ai Model Provider] Token usage metrics", {
         prompt_tokens: this._usageMetrics.prompt_tokens,
         completion_tokens: this._usageMetrics.completion_tokens,
