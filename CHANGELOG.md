@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-04-21
+
+### Changed
+
+- **MCP-first image handling**: When `zai_analyze_image` tool is available, images are analyzed via MCP instead of switching to a vision model. This eliminates token overflow caused by large base64 images in conversations with multiple images.
+- Vision fallback now excludes internal models (e.g., glm-4.6v) as secondary fallback when the preferred vision model is unavailable
+
+### Added
+
+- Image size limit: 1 MB per image (oversized images are skipped)
+- Per-message image limit: 5 images max per message
+- Total image limit: 10 images max across all messages
+- Placeholder text for images skipped due to size/count limits
+
+### Fixed
+
+- Token estimation for images now uses fixed 2000 tokens/image instead of base64-size-based estimation
+- Resolved token overflow errors when pasting multiple images to non-vision models (GLM-5.1)
+
 ## [0.7.7] - 2026-04-02
 
 ### Fixed

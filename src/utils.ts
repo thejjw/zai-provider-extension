@@ -98,21 +98,45 @@ export function getDataPartTextValue(
   }
 }
 
+/** Maximum image size in bytes to send as base64 (1 MB) */
+const MAX_IMAGE_BYTES = 1 * 1024 * 1024;
+/** Maximum number of images per single message */
+const MAX_IMAGES_PER_MESSAGE = 5;
+/** Maximum total images across all messages in a request */
+const MAX_TOTAL_IMAGES = 10;
+
 /**
- * Helper: extract image bytes and mime type from a variety of part shapes
+ * Helper: extract image bytes and mime type from a variety of part shapes.
+ * Returns undefined if the image exceeds MAX_IMAGE_BYTES.
  */
 export function extractImageData(
   part: vscode.LanguageModelInputPart | LegacyPart
 ): { mimeType: string; data: Uint8Array } | undefined {
+  /** Helper: return data only if within size limit */
+  const guard = (
+    mimeType: string,
+    data: Uint8Array | undefined
+  ): { mimeType: string; data: Uint8Array } | undefined => {
+    if (!data || data.length === 0) {
+      return undefined;
+    }
+    if (data.length > MAX_IMAGE_BYTES) {
+      console.warn(
+        `[Z.ai] Image too large (${data.length} bytes > ${MAX_IMAGE_BYTES}), skipping.`
+      );
+      return undefined;
+    }
+    return { mimeType, data };
+  };
+
   const dataPart = part as { mimeType?: unknown; data?: unknown } | null;
   if (
     dataPart &&
     typeof dataPart.mimeType === "string" &&
     dataPart.mimeType.startsWith("image/") &&
-    dataPart.data instanceof Uint8Array &&
-    dataPart.data.length > 0
+    dataPart.data instanceof Uint8Array
   ) {
-    return { mimeType: dataPart.mimeType, data: dataPart.data };
+    return guard(dataPart.mimeType, dataPart.data);
   }
 
   if (typeof part !== "object" || part === null) {
@@ -123,40 +147,40 @@ export function extractImageData(
 
   if (p.type === "image") {
     const mimeType = typeof p.mimeType === "string" ? p.mimeType : "image/png";
-    if (p.bytes instanceof Uint8Array && p.bytes.length > 0) {
-      return { mimeType, data: p.bytes };
+    if (p.bytes instanceof Uint8Array) {
+      return guard(mimeType, p.bytes);
     }
-    if (p.data instanceof Uint8Array && p.data.length > 0) {
-      return { mimeType, data: p.data };
+    if (p.data instanceof Uint8Array) {
+      return guard(mimeType, p.data);
     }
     if (p.buffer instanceof ArrayBuffer && p.buffer.byteLength > 0) {
-      return { mimeType, data: new Uint8Array(p.buffer) };
+      return guard(mimeType, new Uint8Array(p.buffer));
     }
     if (Array.isArray(p.bytes) && p.bytes.length > 0) {
-      return { mimeType, data: new Uint8Array(p.bytes) };
+      return guard(mimeType, new Uint8Array(p.bytes));
     }
     if (Array.isArray(p.data) && p.data.length > 0) {
-      return { mimeType, data: new Uint8Array(p.data) };
+      return guard(mimeType, new Uint8Array(p.data));
     }
     return undefined;
   }
 
   if (typeof p.mimeType === "string" && p.mimeType.startsWith("image/")) {
     const mimeType = p.mimeType;
-    if (p.bytes instanceof Uint8Array && p.bytes.length > 0) {
-      return { mimeType, data: p.bytes };
+    if (p.bytes instanceof Uint8Array) {
+      return guard(mimeType, p.bytes);
     }
-    if (p.data instanceof Uint8Array && p.data.length > 0) {
-      return { mimeType, data: p.data };
+    if (p.data instanceof Uint8Array) {
+      return guard(mimeType, p.data);
     }
     if (p.buffer instanceof ArrayBuffer && p.buffer.byteLength > 0) {
-      return { mimeType, data: new Uint8Array(p.buffer) };
+      return guard(mimeType, new Uint8Array(p.buffer));
     }
     if (Array.isArray(p.bytes) && p.bytes.length > 0) {
-      return { mimeType, data: new Uint8Array(p.bytes) };
+      return guard(mimeType, new Uint8Array(p.bytes));
     }
     if (Array.isArray(p.data) && p.data.length > 0) {
-      return { mimeType, data: new Uint8Array(p.data) };
+      return guard(mimeType, new Uint8Array(p.data));
     }
   }
 
@@ -303,6 +327,8 @@ export function convertMessages(
   options?: { maxToolResultChars?: number }
 ): ZaiChatMessage[] {
   const result: ZaiChatMessage[] = [];
+  /** Running count of images included across all messages so far */
+  let totalImagesSoFar = 0;
 
   for (const msg of messages) {
     const role =
@@ -323,18 +349,29 @@ export function convertMessages(
 
     // Collect images
     const imageParts: ZaiContentPart[] = [];
+    let skippedImageCount = 0;
     for (const part of msg.content) {
       const img = extractImageData(part);
       if (!img) continue;
+      if (imageParts.length >= MAX_IMAGES_PER_MESSAGE || totalImagesSoFar >= MAX_TOTAL_IMAGES) {
+        skippedImageCount++;
+        continue;
+      }
       if (img.data && img.data.length > 0) {
         const base64Data = Buffer.from(img.data).toString("base64");
         imageParts.push({
           type: "image_url",
           image_url: { url: `data:${img.mimeType};base64,${base64Data}` },
         });
+        totalImagesSoFar++;
       } else {
         console.warn("[Z.ai] Image part has no accessible byte data:", part);
       }
+    }
+    if (skippedImageCount > 0) {
+      textParts.push(
+        `\n[${skippedImageCount} image(s) omitted due to size/count limits]`
+      );
     }
 
     // Handle tool calls
@@ -574,9 +611,10 @@ export function estimateMessagesTokens(
       }
       const img = extractImageData(part);
       if (img) {
-        // Rough estimate based on base64 size to avoid undercount
-        const approxBase64Tokens = Math.ceil(img.data.length / 3);
-        total += Math.max(1500, approxBase64Tokens);
+        // GLM vision models use a fixed token count per image tile.
+        // Each tile is 560x560 pixels; a typical screenshot is ~4 tiles.
+        // We conservatively estimate 2000 tokens per image regardless of size.
+        total += 2000;
         continue;
       }
       const toolCall = getToolCallInfo(part);

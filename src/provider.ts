@@ -262,7 +262,8 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
   }
 
   /**
-   * Pick a fallback vision model for image input
+   * Pick a fallback vision model for image input.
+   * Prefers glm-4.6v since most users have access to it.
    */
   private getVisionFallbackModelId(): string | undefined {
     const preferred = ZAI_MODELS.find(
@@ -271,7 +272,7 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
     if (preferred) {
       return preferred.id;
     }
-    return ZAI_MODELS.find((m) => m.supportsVision)?.id;
+    return ZAI_MODELS.find((m) => m.supportsVision && !m.internal)?.id;
   }
 
   /**
@@ -288,6 +289,21 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
       }
     }
     return false;
+  }
+
+  /**
+   * Find the image analysis tool name from the available tools.
+   * Returns the tool name if `zai_analyze_image` is available, undefined otherwise.
+   * When this tool is present, we prefer MCP-based image analysis over vision model switching.
+   */
+  private findImageAnalysisToolName(
+    tools?: readonly vscode.LanguageModelChatTool[]
+  ): string | undefined {
+    if (!tools) {
+      return undefined;
+    }
+    const tool = tools.find((t) => t.name === "zai_analyze_image");
+    return tool?.name;
   }
 
   /**
@@ -446,6 +462,7 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
       }
 
       const hasImages = this.hasImageInput(messages);
+      const imageAnalysisTool = this.findImageAnalysisToolName(options.tools);
       let processedMessages = messages;
       let effectiveModelId = model.id;
       /** Whether we switched to a vision fallback model (may need OCR recovery) */
@@ -453,20 +470,15 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
 
       if (hasImages) {
         if (!this.modelSupportsVision(model.id)) {
-          const visionFallback = this.getVisionFallbackModelId();
-          if (visionFallback && visionFallback !== model.id) {
-            console.warn(
-              "[Z.ai Model Provider] Switching to vision model for image input",
+          // MCP-first: prefer image analysis tool over vision model switching.
+          // This avoids sending large base64 images and stays on the original model.
+          if (imageAnalysisTool) {
+            console.log(
+              "[Z.ai Model Provider] Using MCP image analysis tool",
               {
+                tool: imageAnalysisTool,
                 originalModel: model.id,
-                visionModel: visionFallback,
               }
-            );
-            effectiveModelId = visionFallback;
-            usedVisionFallback = true;
-          } else {
-            console.warn(
-              "[Z.ai Model Provider] No vision model available, using OCR fallback"
             );
             const result = await this.processImagesForNonVisionModel(
               messages,
@@ -474,6 +486,30 @@ export class ZaiChatModelProvider implements LanguageModelChatProvider {
               token
             );
             processedMessages = result.processedMessages;
+          } else {
+            // No MCP tool available, fall back to vision model switching
+            const visionFallback = this.getVisionFallbackModelId();
+            if (visionFallback && visionFallback !== model.id) {
+              console.warn(
+                "[Z.ai Model Provider] Switching to vision model for image input",
+                {
+                  originalModel: model.id,
+                  visionModel: visionFallback,
+                }
+              );
+              effectiveModelId = visionFallback;
+              usedVisionFallback = true;
+            } else {
+              console.warn(
+                "[Z.ai Model Provider] No vision model or MCP tool available, using OCR fallback"
+              );
+              const result = await this.processImagesForNonVisionModel(
+                messages,
+                model.id,
+                token
+              );
+              processedMessages = result.processedMessages;
+            }
           }
         }
       }
