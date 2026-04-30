@@ -41,7 +41,10 @@ export async function shouldShowWelcome(
   context: vscode.ExtensionContext
 ): Promise<boolean> {
   const apiKey = await context.secrets.get("zai.apiKey");
-  const alreadyShown = context.globalState.get<boolean>("zai.welcomeShown", false);
+  const alreadyShown = context.globalState.get<boolean>(
+    "zai.welcomeShown",
+    false
+  );
   return !apiKey && !alreadyShown;
 }
 
